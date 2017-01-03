@@ -8,25 +8,17 @@ import java.util.ArrayList;
 import snapShot.snapShot_Implementation;
 import snapShot.snapShot_Client;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 public class snapShot_Client extends Thread {
-	static boolean locked = false;
-	static boolean locked2 = false;
-	static boolean locked3 = false;
-	static boolean locked4 = false;
+	//static boolean locked = false;
+	//static boolean locked3 = false;
 	static int snapID2 = 0;
-    	public synchronized void run(int hostID) {
-			String url = new String("rmi://localhost/"+Integer.toString(hostID));
-			try {
-				System.out.println(hostID);
-				snapShot_Interface snInt = (snapShot_Interface)Naming.lookup(url);
-				snInt.startT(hostID);
-				System.out.println(hostID);
-			}
-			catch(Exception e) {
-			}
-    	}
-	public static void main(String[] args) {
+
+    static Semaphore token_mux = new Semaphore(1);
+    static Semaphore tx_mux = new Semaphore(1);
+
+    	public static void main(String[] args) {
 		int ID = getID();
 		checkID(ID);
 	}
@@ -207,25 +199,34 @@ public class snapShot_Client extends Thread {
 		int maxtry = 0;
 		while(sending){
 			int newSeqNum = -1;
-			if(!locked){
-				locked = true;
+//			if(!locked){
+//				locked = true;
 				try {
-					newSeqNum = sendAndReceive(id,hostID,amount,seqNum, "send");
-				} finally {
-					locked = false;
+			
+                tx_mux.acquire();
+                token_mux.acquire();
+              	newSeqNum = sendAndReceive(id,hostID,amount,seqNum, "send");
 				}
-				if(maxtry > 3){
-					newSeqNum = seqNum+1;
+            catch (Exception ex){System.out.println("snapshot failed please try again 5");}
+
+                finally {
+			
+                tx_mux.release();
+                token_mux.release();
+			//		locked = false;
 				}
+				//if(maxtry > 3){
+				//	newSeqNum = seqNum+1;
+				//}
 				if(newSeqNum > seqNum){
 					hostID = transactionList.get(randomGenerator.nextInt(transactionList.size()));
 					amount = randomGenerator.nextInt(100) + 1;
 					time = randomGenerator.nextInt(100) + 100;
 					seqNum = newSeqNum;
-					maxtry = 0;
+				//	maxtry = 0;
 				}
-				maxtry++;
-			}
+				//maxtry++;
+			//}
 			try{
 				Thread.sleep(time);
 			}
@@ -259,19 +260,31 @@ public class snapShot_Client extends Thread {
 		returnval = sendAndReceiveToken(id, hostID, amount,seqNum, "token");
 		return returnval;
 	}
-	public static int sendAndReceive2(int id, int hostID, int amount, int seqNum, String transaction){
+
+	public static int sendAndReceive2 (int id, int hostID, int amount, int seqNum, String transaction){
 		int returnval = -1;
-		if (!locked) {
-			locked = true;
+        boolean permit = false;
+    
+        try {
+        permit = tx_mux.tryAcquire(50L, TimeUnit.MILLISECONDS);
+		if (permit) {
+			//locked = true;
 			try {
 				returnval = sendAndReceive(id, hostID, amount,seqNum, transaction);
-			} finally {
-				locked = false;
+			    tx_mux.release();
+            }
+            catch (Exception e){}
+            }
+            }catch (Exception ex){System.out.println("snapshot failed please try again 5");}
+            finally {
+				//locked = false;
 			}
-		}
+		
 		return returnval;
 	}
-	public static int sendAndReceive(int id, int hostID, int amount, int seqNum, String transaction){
+
+public static int sendAndReceive(int id, int hostID, int amount, int seqNum, String transaction){
+
 		Random randomGenerator2 = new Random();
 		int returnval = 0;
 		ArrayList<ArrayList<Integer>> seqNumList = new ArrayList<ArrayList<Integer>>(); 
@@ -281,8 +294,7 @@ public class snapShot_Client extends Thread {
 			int total = snInt2.getBalance();
 			//seqNumList = snInt2.getSeq();
 			//System.out.println(id);
-			if (transaction == "send" && total >= 100 && !locked3){
-				locked3 = true;
+			if (transaction == "send" && total >= 100) {
 				String url = new String("rmi://localhost/" + Integer.toString(hostID));
 				try {
 					snapShot_Interface snInt = (snapShot_Interface)Naming.lookup(url);
@@ -293,15 +305,15 @@ public class snapShot_Client extends Thread {
 							System.out.println("Sent : " + amount + "   seqN : " + seqNum +"  toNd : " + hostID);
 							seqNum++;
 						}
-					locked3 = false;			
+					
 					return seqNum;
 				}
-				catch (Exception e){}
-				locked3 = false;			
+				catch (Exception e){}			
 			}
+
 			else if (transaction ==  "receive"){
 				//System.out.println("MY id is : " + id);
-				locked2 = true;
+//				locked2 = true;
 				ArrayList<ArrayList<Integer>> checkOnLink = new ArrayList<ArrayList<Integer>>(); 
 				try{
 					seqNumList = snInt2.getSeq();
@@ -343,7 +355,7 @@ public class snapShot_Client extends Thread {
 									}
 								}
 							}
-							locked2 = false;
+							//locked2 = false;
 							return seqNum;
 						}
 					}
@@ -352,45 +364,54 @@ public class snapShot_Client extends Thread {
 			}
 		}
 		catch (Exception exx){System.out.println("snapshot failed please try again 3");}
-		locked2 = false;
+		//locked2 = false;
 		return -1;
 	}
-	public static int sendAndReceiveToken(int id, int hostID, int amount, int seqNum, String transaction){
-		ArrayList<ArrayList<Integer>> checkOnLink = new ArrayList<ArrayList<Integer>>(); 
-		String myUrl = new String("rmi://localhost/"+Integer.toString(id));
-		int returnval=-1;			
-		try {
-			snapShot_Interface snInt2 = (snapShot_Interface)Naming.lookup(myUrl);
-			checkOnLink = snInt2.getCheckOnLink();
-			//int snapID = snInt2.getSnapId();
-			boolean snapShotOn = snInt2.checkSnap();
-			if (!snapShotOn){
-				while(locked3){
-					try{
-						Thread.sleep(10);
-					}
-					catch (Exception ex){}
-				}
-				locked3 = true;
-				snInt2.setSnapId(amount);
-				snInt2.setSnap(true);
-				broadcastToken(id, hostID, amount, seqNum, transaction);
-				returnval = seqNum;
-			}
-			for (int i = 0; i<checkOnLink.size(); i++){
-				if (checkOnLink.get(i).get(0) == hostID) {
-					checkOnLink = snInt2.getCheckOnLink();
-					checkOnLink.get(i).set(1,1);
-					snInt2.regCheckOnLink(checkOnLink);
-					//System.out.println("sgdfgdfgdfgdfgdfgdfgdfg");
-					returnval = seqNum;
-				}
-			}
-			return returnval;
-		}
-		catch(Exception exxx){System.out.println("snapshot failed please try again 5");}
-		return -1;
-	}
+	public static int sendAndReceiveToken(int id, int hostID, int amount, int seqNum, String transaction){	
+	
+        try {
+            
+            System.out.println("just recieved token");	
+            
+            System.out.println("just acquired mutex token");	
+            ArrayList<ArrayList<Integer>> checkOnLink = new ArrayList<ArrayList<Integer>>(); 
+            String myUrl = new String("rmi://localhost/"+Integer.toString(id));
+            int returnval=-1;			
+            try {
+                snapShot_Interface snInt2 = (snapShot_Interface)Naming.lookup(myUrl);
+                checkOnLink = snInt2.getCheckOnLink();
+                //int snapID = snInt2.getSnapId();
+                boolean snapShotOn = snInt2.checkSnap();
+                if (!snapShotOn) {        
+                    token_mux.acquire();
+                    snInt2.setSnapId(amount);
+                    snInt2.setSnap(true);
+                    broadcastToken(id, hostID, amount, seqNum, transaction);
+                    returnval = seqNum;
+       
+                    token_mux.release();	 
+            System.out.println("just released mutex token");	
+                }
+            
+                for (int i = 0; i<checkOnLink.size(); i++){
+                    if (checkOnLink.get(i).get(0) == hostID) {
+                        checkOnLink = snInt2.getCheckOnLink();
+                        checkOnLink.get(i).set(1,1);
+                        snInt2.regCheckOnLink(checkOnLink);
+                        //System.out.println("sgdfgdfgdfgdfgdfgdfgdfg");
+                        returnval = seqNum;
+                    }
+                }
+            } 
+            catch(Exception exxx){System.out.println("snapshot failed please try again 5");}
+            return returnval;
+        }  
+        catch (Exception ex){System.out.println("snapshot failed please try again 5");}
+    finally {
+        }
+        return -1;
+    }
+
 	public static void broadcastToken(int id, int hostID, int amount, int seqNum, String transaction){
 		Random randomGenerator2 = new Random();
 		ArrayList<ArrayList<Integer>> seqNumList = new ArrayList<ArrayList<Integer>>(); 
@@ -423,10 +444,10 @@ public class snapShot_Client extends Thread {
 //				Thread.sleep(20);
 //			}
 			//catch (Exception ex){}
-			locked3 = false;
+			//locked3 = false;
 		}
 		catch(Exception exxx){System.out.println("snapshot failed please try again 5");}
-		locked3 = false;
+		//locked3 = false;
 	}		
 }
 class startThread extends Thread {
