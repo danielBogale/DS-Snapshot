@@ -201,18 +201,30 @@ public class snapShot_Client extends Thread {
 			int newSeqNum = -1;
 //			if(!locked){
 //				locked = true;
+        	boolean permit = false;
+        	boolean permit2 = false;
 				try {
 			
-                tx_mux.acquire();
-                token_mux.acquire();
-              	newSeqNum = sendAndReceive(id,hostID,amount,seqNum, "send");
+                			//tx_mux.acquire();
+        				permit = tx_mux.tryAcquire(50L, TimeUnit.MILLISECONDS);
+        				permit2 = token_mux.tryAcquire(50L, TimeUnit.MILLISECONDS);
+                			//token_mux.acquire();
+					if (permit & permit2){
+              					newSeqNum = sendAndReceive(id,hostID,amount,seqNum, "send");
+						token_mux.release();
+               					tx_mux.release();
+					}
+					else if (permit & !permit2){
+						tx_mux.release();
+					}
+					else if (!permit & permit2){
+						token_mux.release();
+					}
 				}
-            catch (Exception ex){System.out.println("snapshot failed please try again 5");}
+            			catch (Exception ex){System.out.println("snapshot failed please try again 5");}
 
-                finally {
-			
-                tx_mux.release();
-                token_mux.release();
+                		finally {
+
 			//		locked = false;
 				}
 				//if(maxtry > 3){
@@ -242,12 +254,13 @@ public class snapShot_Client extends Thread {
 			try{
 				snapShot_Interface snInt2 = (snapShot_Interface)Naming.lookup(myUrl);		
 				snapShotOn = snInt2.checkSnap();
+
 			}
 			catch (Exception ex){}
 			if(!snapShotOn){
 				snapShotOn = true;
 				tokenSeq++;
-				System.out.println("Press \"ENTER\" to take a snapshot");
+				//System.out.println("Press \"ENTER\" to take a snapshot");
    				Scanner scanner = new Scanner(System.in);
   				scanner.nextLine();
 				tokenId = tokenSeq+(id*1000);
@@ -348,11 +361,15 @@ public static int sendAndReceive(int id, int hostID, int amount, int seqNum, Str
 								snInt2.setSnap(false);
 						      		if(snapID2 != snapId && snapId > 1000){
 									snapID2 = snapId;
+									snapTotal = snInt2.getSnapTotal();
 									System.out.println("Snapshot: " + snapId);
 									System.out.println("Total: " + snapTotal);
+								int totalOnLink = 0;
 									for (int k = 0; k<seqNumList.size(); k++){
 										System.out.println(seqNumList.get(k).get(0)  + "->" + id +"  "+seqNumList.get(k).get(3));
+										totalOnLink = totalOnLink + seqNumList.get(k).get(3);
 									}
+									System.err.println(""+snapId+ " " + snapTotal + " " + totalOnLink);
 								}
 							}
 							//locked2 = false;
@@ -385,7 +402,9 @@ public static int sendAndReceive(int id, int hostID, int amount, int seqNum, Str
                 if (!snapShotOn) {        
                     token_mux.acquire();
                     snInt2.setSnapId(amount);
+		    tx_mux.acquire();
                     snInt2.setSnap(true);
+		    tx_mux.release();
                     broadcastToken(id, hostID, amount, seqNum, transaction);
                     returnval = seqNum;
        
